@@ -91,7 +91,7 @@ func resourceServiceDiscoveryCreate(d *schema.ResourceData, meta interface{}) er
 		return fmt.Errorf("Error modifying node %s: %v ", nodeList, err)
 	}
 	d.SetId(tenantUri)
-	return nil
+	return resourceServiceDiscoveryRead(d, meta)
 }
 
 func resourceServiceDiscoveryRead(d *schema.ResourceData, meta interface{}) error {
@@ -104,27 +104,20 @@ func resourceServiceDiscoveryRead(d *schema.ResourceData, meta interface{}) erro
 			nodeList = append(nodeList, node)
 		}
 	}
-	as3Resp, err := client.GetServiceDiscoveryNodes(tenantUri)
+	serviceDiscoveryResp, err := client.GetServiceDiscoveryNodes(tenantUri)
 	if err != nil {
 		return fmt.Errorf("Error Reading node : %v ", err)
 	}
 	//log.Printf("[INFO]: providerOptions: %+v", as3Resp.(map[string]interface{})["result"].(map[string]interface{})["providerOptions"].(map[string]interface{})["nodeList"])
-	nodeList1 := as3Resp.(map[string]interface{})["result"].(map[string]interface{})["providerOptions"].(map[string]interface{})["nodeList"]
+	nodeList1 := serviceDiscoveryResp.(map[string]interface{})["result"].(map[string]interface{})["providerOptions"].(map[string]interface{})["nodeList"]
 	nodeListCount := d.Get("node_list.#").(int)
 	if len(nodeList1.([]interface{})) != nodeListCount {
 		d.SetId("")
 		return fmt.Errorf("[DEBUG] Get Node list failed for  (%s): %s", d.Id(), err)
 	}
-	//if err := d.Set("controls", makeStringSet(nodeList1.(map[string]interface{}))); err != nil {
-	//	return fmt.Errorf("[DEBUG] Error saving Controls  state for Policy (%s): %s", d.Id(), err)
-	//}
-	//for i := 0; i < nodeListCount; i++ {
-	//	prefix := fmt.Sprintf("rule.%d", i)
-	//}
-	if as3Resp == nil {
-		log.Printf("[WARN] Json (%s) not found, removing from state", d.Id())
+	if serviceDiscoveryResp == nil {
 		d.SetId("")
-		return nil
+		return fmt.Errorf("[DEBUG]serviceDiscoveryResp is : %s", serviceDiscoveryResp)
 	}
 	return nil
 }
@@ -140,12 +133,11 @@ func resourceServiceDiscoveryUpdate(d *schema.ResourceData, meta interface{}) er
 			nodeList = append(nodeList, node)
 		}
 	}
-	//log.Printf("[INFO]: node Value: %+v", nodeList)
 	err := client.AddServiceDiscoveryNodes(tenantUri, nodeList)
 	if err != nil {
 		return fmt.Errorf("Error modifying node %s: %v ", nodeList, err)
 	}
-	return nil
+	return resourceServiceDiscoveryRead(d, meta)
 }
 
 func resourceServiceDiscoveryDelete(d *schema.ResourceData, meta interface{}) error {
