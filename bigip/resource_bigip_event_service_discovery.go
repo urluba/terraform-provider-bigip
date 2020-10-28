@@ -7,9 +7,12 @@ If a copy of the MPL was not distributed with this file,You can obtain one at ht
 package bigip
 
 import (
+	"crypto/tls"
 	"fmt"
+	"io/ioutil"
 	"log"
-	"regexp"
+	"net/http"
+	"strings"
 
 	"github.com/f5devcentral/go-bigip"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
@@ -21,20 +24,17 @@ func resourceServiceDiscovery() *schema.Resource {
 		Read:   resourceServiceDiscoveryRead,
 		Update: resourceServiceDiscoveryUpdate,
 		Delete: resourceServiceDiscoveryDelete,
-		Exists: resourceServiceDiscoveryExists,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
-
 		Schema: map[string]*schema.Schema{
-			"partition": {
-				Type:         schema.TypeString,
-				Required:     true,
-				Description:  "Name of the partition/tenant",
-				ForceNew:     true,
+			"tenant_name": {
+				Type:        schema.TypeString,
+				Required:    true,
+				Description: "Name of the partition/tenant",
+				ForceNew:    true,
 			},
-
-			"application": {
+			"application_name": {
 				Type:        schema.TypeString,
 				Required:    true,
 				Description: "Application",
@@ -47,9 +47,8 @@ func resourceServiceDiscovery() *schema.Resource {
 				ForceNew:    true,
 			},
 			"node_list": {
-				Type:     schema.TypeList,
+				Type:     schema.TypeSet,
 				Optional: true,
-				//MaxItems: 1,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": {
@@ -67,42 +66,112 @@ func resourceServiceDiscovery() *schema.Resource {
 							Optional:    true,
 							Description: "port",
 						},
-					    },
 					},
 				},
 			},
+		},
+	}
 }
 
 func resourceServiceDiscoveryCreate(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*bigip.BigIP)
-
+	log.Printf("[INFO]: Client: %+v", client)
+	tenantUri := fmt.Sprintf("~%s~%s~%s", d.Get("tenant_name").(string), d.Get("application_name").(string), d.Get("pool_name").(string))
+	log.Printf("[INFO]: tenantUri: %+v", tenantUri)
+	var nodeList []interface{}
+	if m, ok := d.GetOk("node_list"); ok {
+		for _, node := range m.(*schema.Set).List() {
+			log.Printf("[INFO]: node Value: %+v", node)
+			nodeList = append(nodeList, node)
+		}
+	}
+	log.Printf("[INFO]: node Value: %+v", nodeList)
+	err := client.AddServiceDiscoveryNodes(tenantUri, nodeList)
+	if err != nil {
+		return fmt.Errorf("Error modifying node %s: %v ", nodeList, err)
+	}
+	d.SetId(tenantUri)
 	return nil
 }
 
 func resourceServiceDiscoveryRead(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*bigip.BigIP)
-
-	name := d.Id()
-
-
+	tenantUri := d.Id()
+	var nodeList []interface{}
+	log.Printf("[INFO] Get Event driven service discovery nodes for Application:%+v", tenantUri)
+	if m, ok := d.GetOk("node_list"); ok {
+		for _, node := range m.(*schema.Set).List() {
+			nodeList = append(nodeList, node)
+		}
+	}
+	as3Resp, err := client.GetServiceDiscoveryNodes(tenantUri)
+	if err != nil {
+		return fmt.Errorf("Error Reading node : %v ", err)
+	}
+	//log.Printf("[INFO]: providerOptions: %+v", as3Resp.(map[string]interface{})["result"].(map[string]interface{})["providerOptions"].(map[string]interface{})["nodeList"])
+	nodeList1 := as3Resp.(map[string]interface{})["result"].(map[string]interface{})["providerOptions"].(map[string]interface{})["nodeList"]
+	nodeListCount := d.Get("node_list.#").(int)
+	if len(nodeList1.([]interface{})) != nodeListCount {
+		d.SetId("")
+		return fmt.Errorf("[DEBUG] Get Node list failed for  (%s): %s", d.Id(), err)
+	}
+	//if err := d.Set("controls", makeStringSet(nodeList1.(map[string]interface{}))); err != nil {
+	//	return fmt.Errorf("[DEBUG] Error saving Controls  state for Policy (%s): %s", d.Id(), err)
+	//}
+	//for i := 0; i < nodeListCount; i++ {
+	//	prefix := fmt.Sprintf("rule.%d", i)
+	//}
+	if as3Resp == nil {
+		log.Printf("[WARN] Json (%s) not found, removing from state", d.Id())
+		d.SetId("")
+		return nil
+	}
 	return nil
-}
-
-func resourceServiceDiscoveryExists(d *schema.ResourceData, meta interface{}) (bool, error) {
-	client := meta.(*bigip.BigIP)
-
-	name := d.Id()
 }
 
 func resourceServiceDiscoveryUpdate(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*bigip.BigIP)
-
-	name := d.Id()
+	tenantUri := d.Id()
+	log.Printf("[INFO]: tenantUri: %+v", tenantUri)
+	var nodeList []interface{}
+	if m, ok := d.GetOk("node_list"); ok {
+		for _, node := range m.(*schema.Set).List() {
+			log.Printf("[INFO]: node Value: %+v", node)
+			nodeList = append(nodeList, node)
+		}
+	}
+	//log.Printf("[INFO]: node Value: %+v", nodeList)
+	err := client.AddServiceDiscoveryNodes(tenantUri, nodeList)
+	if err != nil {
+		return fmt.Errorf("Error modifying node %s: %v ", nodeList, err)
+	}
+	return nil
 }
 
 func resourceServiceDiscoveryDelete(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*bigip.BigIP)
-
-	name := d.Id()
+	clientBigip := meta.(*bigip.BigIP)
+	tenantUri := d.Id()
+	url := clientBigip.Host + "/mgmt/shared/service-discovery/task/" + tenantUri + "/nodes/"
+	payload := strings.NewReader("[ ]\n")
+	log.Printf("[DEBUG] tenantUri Complete :%v", url)
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	client := &http.Client{Transport: tr}
+	req, err := http.NewRequest("POST", url, payload)
+	if err != nil {
+		return fmt.Errorf("Error while creating http request with AS3 json:%+v ", err)
+	}
+	req.SetBasicAuth(clientBigip.User, clientBigip.Password)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	body, err := ioutil.ReadAll(resp.Body)
+	bodyString := string(body)
+	if resp.Status != "200 OK" || err != nil {
+		defer resp.Body.Close()
+		return fmt.Errorf("Error while Sending/Posting http request with AS3 json :%s  %v", bodyString, err)
+	}
+	defer resp.Body.Close()
+	d.SetId("")
 	return nil
 }
