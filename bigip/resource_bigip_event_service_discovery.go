@@ -151,7 +151,7 @@ func resourceServiceDiscoveryDelete(d *schema.ResourceData, meta interface{}) er
 	client := &http.Client{Transport: tr}
 	req, err := http.NewRequest("POST", url, payload)
 	if err != nil {
-		return fmt.Errorf("Error while creating http request with AS3 json:%+v ", err)
+		return fmt.Errorf("Error while creating http request for Delete operation:%+v ", err)
 	}
 	req.SetBasicAuth(clientBigip.User, clientBigip.Password)
 	req.Header.Set("Accept", "application/json")
@@ -161,7 +161,7 @@ func resourceServiceDiscoveryDelete(d *schema.ResourceData, meta interface{}) er
 	bodyString := string(body)
 	if resp.Status != "200 OK" || err != nil {
 		defer resp.Body.Close()
-		return fmt.Errorf("Error while Sending/Posting http request with AS3 json :%s  %v", bodyString, err)
+		return fmt.Errorf("Error while Sending/Posting http request for Delete operation :%s  %v", bodyString, err)
 	}
 	defer resp.Body.Close()
 	d.SetId("")
